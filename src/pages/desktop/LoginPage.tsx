@@ -6,6 +6,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
+import { login } from "@/lib/api";
 
 export default function LoginPage() {
   const navigate = useNavigate();
@@ -40,19 +41,18 @@ export default function LoginPage() {
     if (!validateForm()) return;
     
     setIsLoading(true);
-    
-    // Simulate API call
-    await new Promise((resolve) => setTimeout(resolve, 1500));
-    
-    // Demo: accept any valid-looking credentials
-    if (email && password.length >= 6) {
+
+    try {
+      await login(email, password);
       toast.success("Welcome back!", {
         description: "You've successfully signed in.",
       });
       navigate("/dashboard");
-    } else {
+    } catch (error) {
+      const message =
+        error instanceof Error ? error.message : "Invalid email or password.";
       toast.error("Authentication failed", {
-        description: "Invalid email or password. Please try again.",
+        description: message,
       });
       setIsLoading(false);
     }

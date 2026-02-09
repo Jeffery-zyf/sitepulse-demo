@@ -23,3 +23,6 @@ Thumbs.db
 # editor
 .vscode
 .idea
+
+# sqlite
+backend/data

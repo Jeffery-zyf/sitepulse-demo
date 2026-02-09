@@ -1,7 +1,7 @@
 import { cn } from "@/lib/utils";
 import { Loader2, CheckCircle2, XCircle, Clock } from "lucide-react";
 
-type Status = "queued" | "running" | "done" | "failed";
+type Status = "queued" | "running" | "completed" | "done" | "failed";
 
 interface StatusBadgeProps {
   status: Status;
@@ -18,6 +18,11 @@ const statusConfig: Record<Status, { label: string; icon: typeof Clock; classNam
     label: "Running",
     icon: Loader2,
     className: "bg-primary/10 text-primary border-primary/30 animate-pulse-glow",
+  },
+  completed: {
+    label: "Completed",
+    icon: CheckCircle2,
+    className: "bg-[hsl(var(--success))]/10 text-[hsl(var(--success))] border-[hsl(var(--success))]/30",
   },
   done: {
     label: "Completed",
