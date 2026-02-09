@@ -18,13 +18,12 @@ import {
   DialogTrigger,
 } from "@/components/ui/dialog";
 import { Label } from "@/components/ui/label";
-import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import {
-  projects,
-  getLatestAuditForProject,
-  getMembersByProjectId,
-  type Project,
-} from "@/lib/mockData";
+  createProject,
+  getProjects,
+  runAudit,
+} from "@/lib/api";
+import type { Project } from "@/lib/types";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
 import { format } from "date-fns";
@@ -41,21 +40,22 @@ export default function DashboardPage() {
   const [newProjectUrl, setNewProjectUrl] = useState("");
   const [runningAudits, setRunningAudits] = useState<Set<string>>(new Set());
 
-  // Simulate loading
   useEffect(() => {
-    const loadData = async () => {
-      await new Promise((resolve) => setTimeout(resolve, 1200));
-      // Uncomment to test error state:
-      // setLoadingState("error");
-      // return;
-      
-      // Uncomment to test empty state:
-      // setProjectList([]);
-      // setLoadingState("empty");
-      // return;
-      
-      setProjectList(projects);
-      setLoadingState("success");
+    const loadData = async (showLoading = true) => {
+      if (showLoading) {
+        setLoadingState("loading");
+      }
+      try {
+        const projectsData = await getProjects();
+        setProjectList(projectsData);
+        setLoadingState(projectsData.length > 0 ? "success" : "empty");
+      } catch (error) {
+        toast.error("Failed to load projects", {
+          description:
+            error instanceof Error ? error.message : "Please try again.",
+        });
+        setLoadingState("error");
+      }
     };
     loadData();
   }, []);
@@ -66,52 +66,69 @@ export default function DashboardPage() {
       project.url.toLowerCase().includes(searchQuery.toLowerCase())
   );
 
-  const handleCreateProject = () => {
+  const handleCreateProject = async () => {
     if (!newProjectName || !newProjectUrl) return;
     
-    const newProject: Project = {
-      id: `prj_${Date.now()}`,
-      ownerId: "usr_1",
-      name: newProjectName,
-      url: newProjectUrl.startsWith("http") ? newProjectUrl : `https://${newProjectUrl}`,
-      createdAt: new Date().toISOString(),
-    };
-    
-    setProjectList([newProject, ...projectList]);
-    setLoadingState("success"); // Ensure state switches to success after creating
-    setIsCreateDialogOpen(false);
-    setNewProjectName("");
-    setNewProjectUrl("");
-    toast.success("Project created", {
-      description: `${newProject.name} has been added to your projects.`,
-    });
+    try {
+      const createdProject = await createProject(
+        newProjectName,
+        newProjectUrl.startsWith("http")
+          ? newProjectUrl
+          : `https://${newProjectUrl}`
+      );
+      setProjectList([createdProject, ...projectList]);
+      setLoadingState("success");
+      setIsCreateDialogOpen(false);
+      setNewProjectName("");
+      setNewProjectUrl("");
+      toast.success("Project created", {
+        description: `${createdProject.name} has been added to your projects.`,
+      });
+    } catch (error) {
+      toast.error("Unable to create project", {
+        description:
+          error instanceof Error ? error.message : "Please try again later.",
+      });
+    }
   };
 
-  const handleRunAudit = (projectId: string, projectName: string) => {
+  const handleRunAudit = async (projectId: string, projectName: string) => {
     setRunningAudits((prev) => new Set(prev).add(projectId));
-    toast.success("Audit started", {
-      description: `Running audit for ${projectName}...`,
-    });
-    
-    // Simulate audit completion
-    setTimeout(() => {
+    try {
+      await runAudit(projectId);
+      toast.success("Audit started", {
+        description: `Running audit for ${projectName}...`,
+      });
+      const refreshed = await getProjects();
+      setProjectList(refreshed);
+    } catch (error) {
+      toast.error("Audit failed to start", {
+        description:
+          error instanceof Error ? error.message : "Please try again later.",
+      });
+    } finally {
       setRunningAudits((prev) => {
         const next = new Set(prev);
         next.delete(projectId);
         return next;
       });
-      toast.success("Audit completed", {
-        description: `${projectName} audit finished successfully.`,
-      });
-    }, 5000);
+    }
   };
 
   const handleRetry = () => {
     setLoadingState("loading");
-    setTimeout(() => {
-      setProjectList(projects);
-      setLoadingState("success");
-    }, 1200);
+    getProjects()
+      .then((projectsData) => {
+        setProjectList(projectsData);
+        setLoadingState(projectsData.length > 0 ? "success" : "empty");
+      })
+      .catch((error) => {
+        toast.error("Failed to load projects", {
+          description:
+            error instanceof Error ? error.message : "Please try again.",
+        });
+        setLoadingState("error");
+      });
   };
 
   return (
@@ -228,10 +245,14 @@ export default function DashboardPage() {
             {/* Table Body */}
             <div className="divide-y divide-border">
               {filteredProjects.map((project) => {
-                const latestAudit = getLatestAuditForProject(project.id);
-                const members = getMembersByProjectId(project.id);
-                const isRunning = runningAudits.has(project.id) || latestAudit?.status === "running";
-                const displayStatus = isRunning ? "running" : (latestAudit?.status || "queued");
+                const latestAudit = project.latestAudit;
+                const isRunning =
+                  runningAudits.has(project.id) ||
+                  latestAudit?.status === "running" ||
+                  latestAudit?.status === "queued";
+                const displayStatus = isRunning
+                  ? "running"
+                  : (latestAudit?.status || "queued");
                 
                 return (
                   <div
@@ -261,20 +282,9 @@ export default function DashboardPage() {
                       <StatusBadge status={displayStatus as any} />
                     </div>
                     <div className="col-span-1">
-                      <div className="flex -space-x-2">
-                        {members.slice(0, 3).map(({ user }) => (
-                          <Avatar key={user.id} className="h-7 w-7 border-2 border-card">
-                            <AvatarImage src={user.avatarUrl} alt={user.name} />
-                            <AvatarFallback className="text-[10px] bg-muted">
-                              {user.name.split(" ").map((n) => n[0]).join("")}
-                            </AvatarFallback>
-                          </Avatar>
-                        ))}
-                        {members.length > 3 && (
-                          <div className="flex h-7 w-7 items-center justify-center rounded-full border-2 border-card bg-muted text-[10px] font-medium">
-                            +{members.length - 3}
-                          </div>
-                        )}
+                      <div className="flex items-center gap-2 text-xs text-muted-foreground">
+                        <Users className="h-3.5 w-3.5" />
+                        {project.memberCount ?? 1}
                       </div>
                     </div>
                     <div className="col-span-2 flex justify-end gap-2">

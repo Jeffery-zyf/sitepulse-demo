@@ -1,4 +1,4 @@
-import { Link, useLocation } from "react-router-dom";
+import { Link, useLocation, useNavigate } from "react-router-dom";
 import { Activity, ChevronDown, LogOut, Settings, User } from "lucide-react";
 import { currentUser } from "@/lib/mockData";
 import {
@@ -10,6 +10,7 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { cn } from "@/lib/utils";
+import { clearAuth, getStoredUser } from "@/lib/auth";
 
 const navLinks = [
   { href: "/dashboard", label: "Projects" },
@@ -19,6 +20,9 @@ const navLinks = [
 
 export function Navbar() {
   const location = useLocation();
+  const navigate = useNavigate();
+  const storedUser = getStoredUser();
+  const user = storedUser || currentUser;
 
   return (
     <header className="sticky top-0 z-50 w-full border-b border-border bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/60">
@@ -59,21 +63,21 @@ export function Navbar() {
           <DropdownMenuTrigger asChild>
             <button className="flex items-center gap-2 rounded-lg px-2 py-1.5 hover:bg-accent transition-colors">
               <Avatar className="h-8 w-8">
-                <AvatarImage src={currentUser.avatarUrl} alt={currentUser.name} />
+                <AvatarImage src={currentUser.avatarUrl} alt={user.name} />
                 <AvatarFallback className="bg-primary text-primary-foreground text-xs">
-                  {currentUser.name.split(" ").map((n) => n[0]).join("")}
+                  {user.name.split(" ").map((n) => n[0]).join("")}
                 </AvatarFallback>
               </Avatar>
               <span className="text-sm font-medium text-foreground hidden sm:block">
-                {currentUser.name}
+                {user.name}
               </span>
               <ChevronDown className="h-4 w-4 text-muted-foreground" />
             </button>
           </DropdownMenuTrigger>
           <DropdownMenuContent align="end" className="w-56">
             <div className="px-2 py-1.5">
-              <p className="text-sm font-medium text-foreground">{currentUser.name}</p>
-              <p className="text-xs text-muted-foreground">{currentUser.email}</p>
+              <p className="text-sm font-medium text-foreground">{user.name}</p>
+              <p className="text-xs text-muted-foreground">{user.email}</p>
             </div>
             <DropdownMenuSeparator />
             <DropdownMenuItem asChild>
@@ -89,11 +93,15 @@ export function Navbar() {
               </Link>
             </DropdownMenuItem>
             <DropdownMenuSeparator />
-            <DropdownMenuItem asChild>
-              <Link to="/login" className="cursor-pointer text-destructive">
-                <LogOut className="mr-2 h-4 w-4" />
-                Sign out
-              </Link>
+            <DropdownMenuItem
+              onClick={() => {
+                clearAuth();
+                navigate("/login");
+              }}
+              className="cursor-pointer text-destructive"
+            >
+              <LogOut className="mr-2 h-4 w-4" />
+              Sign out
             </DropdownMenuItem>
           </DropdownMenuContent>
         </DropdownMenu>

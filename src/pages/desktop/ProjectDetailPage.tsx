@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useMemo } from "react";
 import { useParams, Link } from "react-router-dom";
 import { 
   ArrowLeft, 
@@ -26,12 +26,8 @@ import {
   CollapsibleContent,
   CollapsibleTrigger,
 } from "@/components/ui/collapsible";
-import {
-  getProjectById,
-  getAuditsByProjectId,
-  type Audit,
-  type AuditIssue,
-} from "@/lib/mockData";
+import { getProjectDetail, runAudit } from "@/lib/api";
+import type { Audit, AuditIssue, Project } from "@/lib/types";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
 import { format } from "date-fns";
@@ -40,18 +36,44 @@ export default function ProjectDetailPage() {
   const { id } = useParams<{ id: string }>();
   const [selectedAuditId, setSelectedAuditId] = useState<string | null>(null);
   const [expandedIssues, setExpandedIssues] = useState<Set<string>>(new Set());
-  const [isRunningAudit, setIsRunningAudit] = useState(false);
+  const [project, setProject] = useState<Project | null>(null);
+  const [audits, setAudits] = useState<Audit[]>([]);
+  const [loadingState, setLoadingState] = useState<"loading" | "error" | "success">(
+    "loading"
+  );
+  const [isTriggeringAudit, setIsTriggeringAudit] = useState(false);
 
-  // Demo fallback: try exact ID first, then prefixed version, then default to prj_1
   const resolvedId = id || "";
-  const project = getProjectById(resolvedId) 
-    || getProjectById(`prj_${resolvedId}`) 
-    || getProjectById("prj_1"); // Default fallback for demo
-  
-  const projectId = project?.id || "";
-  const audits = getAuditsByProjectId(projectId);
   const selectedAudit = audits.find((a) => a.id === selectedAuditId) || audits[0];
   const latestAuditStatus = selectedAudit?.status || "queued";
+  const hasInProgressAudit = useMemo(
+    () => audits.some((audit) => audit.status === "queued" || audit.status === "running"),
+    [audits]
+  );
+  const isAuditRunning = hasInProgressAudit || isTriggeringAudit;
+
+  useEffect(() => {
+    if (!resolvedId) return;
+    const loadProject = async (showLoading = true) => {
+      if (showLoading) {
+        setLoadingState("loading");
+      }
+      try {
+        const data = await getProjectDetail(resolvedId);
+        setProject(data.project);
+        setAudits(data.audits);
+        setLoadingState("success");
+      } catch (error) {
+        toast.error("Unable to load project", {
+          description:
+            error instanceof Error ? error.message : "Please try again.",
+        });
+        setLoadingState("error");
+      }
+    };
+
+    loadProject();
+  }, [resolvedId]);
 
   useEffect(() => {
     if (audits.length > 0 && !selectedAuditId) {
@@ -59,34 +81,38 @@ export default function ProjectDetailPage() {
     }
   }, [audits, selectedAuditId]);
 
-  if (!project) {
-    return (
-      <div className="min-h-screen bg-background">
-        <Navbar />
-        <main className="mx-auto max-w-[1440px] px-6 py-8">
-          <div className="text-center py-12">
-            <p className="text-muted-foreground">Project not found.</p>
-            <Link to="/dashboard" className="text-primary hover:underline mt-2 inline-block">
-              Return to dashboard
-            </Link>
-          </div>
-        </main>
-      </div>
-    );
-  }
+  useEffect(() => {
+    if (!project || !hasInProgressAudit) return;
+    const interval = setInterval(async () => {
+      try {
+        const data = await getProjectDetail(project.id);
+        setAudits(data.audits);
+      } catch {
+        // Ignore polling errors to avoid spamming the UI.
+      }
+    }, 2000);
 
-  const handleRunAudit = () => {
-    setIsRunningAudit(true);
-    toast.success("Audit started", {
-      description: `Running audit for ${project.name}...`,
-    });
-    
-    setTimeout(() => {
-      setIsRunningAudit(false);
-      toast.success("Audit completed", {
-        description: "Results are now available.",
+    return () => clearInterval(interval);
+  }, [project, hasInProgressAudit]);
+
+  const handleRunAudit = async () => {
+    if (!project) return;
+    setIsTriggeringAudit(true);
+    try {
+      const newAudit = await runAudit(project.id);
+      setAudits((prev) => [newAudit, ...prev]);
+      setSelectedAuditId(newAudit.id);
+      toast.success("Audit started", {
+        description: `Running audit for ${project.name}...`,
       });
-    }, 5000);
+    } catch (error) {
+      toast.error("Unable to start audit", {
+        description:
+          error instanceof Error ? error.message : "Please try again later.",
+      });
+    } finally {
+      setIsTriggeringAudit(false);
+    }
   };
 
   const toggleIssue = (issueId: string) => {
@@ -101,9 +127,37 @@ export default function ProjectDetailPage() {
     });
   };
 
-  const getIssuesByCategory = (issues: AuditIssue[], category: string) => {
-    return issues.filter((issue) => issue.category === category);
-  };
+  const getIssuesByCategory = (issues: AuditIssue[], category: string) =>
+    issues.filter((issue) => issue.category === category);
+
+  if (loadingState === "loading") {
+    return (
+      <div className="min-h-screen bg-background">
+        <Navbar />
+        <main className="mx-auto max-w-[1440px] px-6 py-8">
+          <div className="rounded-lg border border-border bg-card px-8 py-16 text-center">
+            <p className="text-muted-foreground">Loading project details...</p>
+          </div>
+        </main>
+      </div>
+    );
+  }
+
+  if (loadingState === "error" || !project) {
+    return (
+      <div className="min-h-screen bg-background">
+        <Navbar />
+        <main className="mx-auto max-w-[1440px] px-6 py-8">
+          <div className="text-center py-12">
+            <p className="text-muted-foreground">Project not found.</p>
+            <Link to="/dashboard" className="text-primary hover:underline mt-2 inline-block">
+              Return to dashboard
+            </Link>
+          </div>
+        </main>
+      </div>
+    );
+  }
 
   return (
     <div className="min-h-screen bg-background">
@@ -126,7 +180,7 @@ export default function ProjectDetailPage() {
                 <h1 className="font-display text-2xl font-semibold text-foreground">
                   {project.name}
                 </h1>
-                <StatusBadge status={isRunningAudit ? "running" : latestAuditStatus} />
+                <StatusBadge status={isAuditRunning ? "running" : latestAuditStatus} />
               </div>
               <a
                 href={project.url}
@@ -140,11 +194,11 @@ export default function ProjectDetailPage() {
             </div>
             <Button
               onClick={handleRunAudit}
-              disabled={isRunningAudit}
-              className={cn(isRunningAudit && "animate-pulse-glow")}
+              disabled={isAuditRunning}
+              className={cn(isAuditRunning && "animate-pulse-glow")}
             >
               <Play className="mr-2 h-4 w-4" />
-              {isRunningAudit ? "Running Audit..." : "Run New Audit"}
+              {isAuditRunning ? "Running Audit..." : "Run New Audit"}
             </Button>
           </div>
         </div>
@@ -176,7 +230,7 @@ export default function ProjectDetailPage() {
                       <Clock className="h-3 w-3" />
                       {format(new Date(audit.createdAt), "h:mm a")}
                     </div>
-                    {audit.status === "done" && audit.scores && (
+                    {audit.status === "completed" && audit.scores && (
                       <div className="flex items-center gap-3 mt-2">
                         <span className="text-xs text-muted-foreground">
                           Avg: <span className="font-mono text-foreground">
@@ -206,7 +260,7 @@ export default function ProjectDetailPage() {
                   Run your first audit
                 </Button>
               </div>
-            ) : selectedAudit.status === "running" || isRunningAudit ? (
+            ) : selectedAudit.status === "running" ? (
               <div className="rounded-lg border border-border bg-card px-8 py-16 text-center relative overflow-hidden">
                 <div className="absolute inset-0 bg-gradient-to-b from-primary/5 to-transparent animate-scan pointer-events-none" />
                 <div className="relative z-10">
